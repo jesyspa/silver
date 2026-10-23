@@ -91,21 +91,22 @@ object MacroExpander {
           case PIf(k, cond, thn, Some(e@PElse(ek, els))) =>
             PIf(k, cond, linearizeSeqn(thn), Some(PElse(ek, linearizeSeqn(els))(e.pos)))(i.pos)
         }
-        var stmts = Seq.empty[(PStmt, PSym.OptionSemi)]
+        // Append into a builder so long blocks do not repeatedly copy their prefix.
+        val stmts = List.newBuilder[(PStmt, PSym.OptionSemi)]
         (ss.inner.toSeq.zip(ss.inner.delimiters)).foreach {
           case (n: PMacroSeqn, _) =>
             val lin = linearizeSeqOfNestedStmt(n.ss)
-            stmts = stmts ++ lin.inner.toSeq.zip(lin.inner.delimiters)
+            stmts ++= lin.inner.toSeq.zip(lin.inner.delimiters)
           case (n: PSeqn, s) =>
-            stmts = stmts :+ (linearizeSeqn(n), s)
+            stmts += ((linearizeSeqn(n), s))
           case (n: PIf, s) =>
-            stmts = stmts :+ (linearizeIf(n), s)
+            stmts += ((linearizeIf(n), s))
           case (n@PWhile(k, cond, invs, body), s) =>
-            stmts = stmts :+ (PWhile(k, cond, invs, linearizeSeqn(body))(n.pos), s)
+            stmts += ((PWhile(k, cond, invs, linearizeSeqn(body))(n.pos), s))
           case (n, s) =>
-            stmts = stmts :+ (n, s)
+            stmts += ((n, s))
         }
-        ss.update(PDelimited(stmts)(ss.inner.pos))
+        ss.update(PDelimited(stmts.result())(ss.inner.pos))
       }
 
       val body = method.body match {
