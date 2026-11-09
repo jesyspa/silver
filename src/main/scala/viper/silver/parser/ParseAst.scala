@@ -48,7 +48,20 @@ trait PNode extends Where with Product with Rewritable with HasExtraValList {
     ReformatPrettyPrinter.showNode(this)(f.andThen(RNode.rt(_)))
 
   /** Returns a list of all direct sub-nodes of this node. */
-  def subnodes: Iterator[PNode] = PNode.children(this, this).flatMap(PNode.nodes(this, _))
+  def subnodes: Iterator[PNode] = subnodesArray.iterator
+
+  /** The direct sub-nodes, computed once. The product elements of a parse AST node are immutable,
+    * so the result never changes; traversals visit each node many times. */
+  @volatile private var _subnodesCache: Array[PNode] = null
+  private def subnodesArray: Array[PNode] = {
+    var c = _subnodesCache
+    if (c == null) {
+      c = PNode.children(this, this).flatMap(PNode.nodes(this, _)).toArray
+      _subnodesCache = c
+    }
+    c
+  }
+  private[parser] def subnodesSeq: Seq[PNode] = scala.collection.immutable.ArraySeq.unsafeWrapArray(subnodesArray)
 
   /** @see [[Visitor.reduceTree()]] */
   def reduceTree[T](f: (PNode, Seq[T]) => T) = Visitor.reduceTree(this, PNode.callSubnodes)(f)
@@ -166,7 +179,7 @@ object PNode {
       case _ => children(parent, n).flatMap(nodes(parent, _))
     }
   }
-  def callSubnodes(n: PNode): Seq[PNode] = n.subnodes.toSeq
+  def callSubnodes(n: PNode): Seq[PNode] = n.subnodesSeq
 }
 
 object TypeHelper {

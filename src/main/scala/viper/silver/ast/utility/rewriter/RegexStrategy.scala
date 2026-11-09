@@ -257,7 +257,7 @@ class RegexStrategy[N <: Rewritable : reflection.TypeTag : scala.reflect.ClassTa
           if (noRecursion.contains(newNode))
             newNode.asInstanceOf[A]
           else {
-            val allowedToRecurse = recursionFunc.applyOrElse(newNode, (_: N) => newNode.children).toSet
+            val allowedToRecurse = ChildFilter(recursionFunc, newNode)
             val children = newNode.children.map(child => if (allowedToRecurse(child)) replaceTopDown(child, matches, newAncList) else child)
 
             newNode.withChildren(children).asInstanceOf[A]

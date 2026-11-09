@@ -121,14 +121,17 @@ object MacroExpander {
       }
     }
 
+    // `namesInScope(p, Some(t))` depends only on `p` and on `t` up to structural equality, and walks all of `p`.
+    val namesInScopeCache = mutable.HashMap.empty[PNode, Set[String]]
+
     def doExpandDefinesAll(program: PProgram, reports: mutable.Buffer[ParseReport] = mutable.Buffer.empty): PProgram = {
       val newImported = program.imported.map(doExpandDefinesAll(_))
 
       val newMembers = try {
         program.members.map {
-          case n: PDomain => doExpandDefines(globalMacros, n, p)
-          case n: PFunction => doExpandDefines(globalMacros, n, p)
-          case n: PPredicate => doExpandDefines(globalMacros, n, p)
+          case n: PDomain => doExpandDefines(globalMacros, n, p, namesInScopeCache)
+          case n: PFunction => doExpandDefines(globalMacros, n, p, namesInScopeCache)
+          case n: PPredicate => doExpandDefines(globalMacros, n, p, namesInScopeCache)
           case n: PMethod => {
             // Collect local macro definitions
             val localMacros = n.deepCollect { case n: PDefine => n }
@@ -140,7 +143,7 @@ object MacroExpander {
               if (localMacros.isEmpty) n
               else StrategyBuilder.Slim[PNode]({ case mac: PDefine => PSkip()(mac.pos) }).execute(n)
 
-            linearizeMethod(doExpandDefines(localMacros ++ globalMacros, methodWithoutMacros, p))
+            linearizeMethod(doExpandDefines(localMacros ++ globalMacros, methodWithoutMacros, p, namesInScopeCache))
           }
           case n => n
         }
@@ -175,7 +178,8 @@ object MacroExpander {
     * @tparam T       Type parameter of 'subtree' and return type, which is a subtype of PNode
     * @return         The same subtree with all macro calls expanded
     */
-  def doExpandDefines[T <: PNode] (macros: Seq[PDefine], subtree: T, program: PProgram): T = {
+  def doExpandDefines[T <: PNode] (macros: Seq[PDefine], subtree: T, program: PProgram,
+                                   namesInScopeCache: mutable.Map[PNode, Set[String]] = mutable.HashMap.empty): T = {
 
     // Store the replacements from normal variable to freshly generated variable
     val renamesMap = mutable.Map.empty[String, String]
@@ -390,7 +394,7 @@ object MacroExpander {
           }
 
           val newNode = try {
-            scopeAtMacroCall = NameAnalyser().namesInScope(program, Some(macroCall))
+            scopeAtMacroCall = namesInScopeCache.getOrElseUpdate(macroCall, NameAnalyser().namesInScope(program, Some(macroCall)))
             ctx.parent match {
               case s: PScope => currentMacroScope = s
               case n => currentMacroScope = customGetEnclosingScope(n).get
