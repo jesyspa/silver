@@ -436,7 +436,7 @@ class Strategy[N <: Rewritable : reflection.TypeTag : scala.reflect.ClassTag, C 
             n.asInstanceOf[A]
           else {
             // Rewrite children
-            val allowedToRecurse = recursionFunc.applyOrElse(n, (_: N) => n.children).toSet
+            val allowedToRecurse = ChildFilter(recursionFunc, n)
             val children = n.children.map(child => if (allowedToRecurse(child)) rewriteTopDown(child, c) else child)
 
             // Adopt rewritten children
@@ -487,7 +487,7 @@ class Strategy[N <: Rewritable : reflection.TypeTag : scala.reflect.ClassTag, C 
           val c = context.addAncestor(node).asInstanceOf[C]
 
           // Rewrite children
-          val allowedToRecurse = recursionFunc.applyOrElse(node, (_: N) => node.children).toSet
+          val allowedToRecurse = ChildFilter(recursionFunc, node)
           val children = node.children.map(child => if (allowedToRecurse(child)) rewriteBottomUp(child, c) else child)
 
           // Adopt rewritten children
@@ -544,7 +544,7 @@ class Strategy[N <: Rewritable : reflection.TypeTag : scala.reflect.ClassTag, C 
             n.asInstanceOf[A]
           else {
             // Rewrite children
-            val allowedToRecurse = recursionFunc.applyOrElse(n, (_: N) => n.children).toSet
+            val allowedToRecurse = ChildFilter(recursionFunc, n)
             val children = n.children.map(child => if (allowedToRecurse(child)) rewriteInnermost(child, c) else child)
 
             // Adopt rewritten children
@@ -1002,7 +1002,7 @@ class StrategyVisitor[N <: Rewritable, C <: Context[N]](val visitNode: PartialFu
           if (visitNode.isDefinedAt(node, c))
             visitNode(node, c)
 
-          val allowedToRecurse = recursionFunc.applyOrElse(node, (_: N) => node.children).toSet
+          val allowedToRecurse = ChildFilter(recursionFunc, node)
           node.children.filter(allowedToRecurse).foreach(visitTopDown(_, c))
 
         case collection: Iterable[_] => collection.map(visitTopDown(_, context))
@@ -1092,7 +1092,7 @@ class Query[N <: Rewritable, B](val getInfo: PartialFunction[N, B]) {
           nElement.get
         })
 
-        val allowedToRecurse = recursionFunc.applyOrElse(n, (_: N) => n.children).toSet
+        val allowedToRecurse = ChildFilter(recursionFunc, n)
         val childrenQueryRes = accumulator(n.children.filter(allowedToRecurse).map(execute))
 
         accumulator(Seq(nodeQueryRes, childrenQueryRes))
@@ -1208,5 +1208,16 @@ case class PartialTernary[N <: Rewritable, C <: Context[N]](s: Strategy[N, C], r
   def |(s2: Strategy[N, C]): Strategy[N, C] = {
     s.setRule(Ternary(s.getRule, r2, s2.getRule))
     s
+  }
+}
+/** Decides which children of a node a strategy may recurse into. Without a recursion function for the node
+  * every child is allowed, so we avoid hashing all children (and thereby their whole subtrees) into a set. */
+private[rewriter] object ChildFilter {
+  private val allChildren: Seq[AnyRef] = List(new AnyRef)
+  private val allowAll: Any => Boolean = _ => true
+
+  def apply[N](recursionFunc: PartialFunction[N, Seq[AnyRef]], node: N): Any => Boolean = {
+    val allowed = recursionFunc.applyOrElse(node, (_: N) => allChildren)
+    if (allowed eq allChildren) allowAll else allowed.toSet[Any]
   }
 }
