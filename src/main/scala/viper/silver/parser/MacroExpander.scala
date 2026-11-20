@@ -26,6 +26,14 @@ object MacroExpander {
     val reports = mutable.Buffer.empty[ParseReport]
     val globalMacros = p.macros
 
+    // Most generated programs define no macros. Expansion would then rebuild an equal program after several
+    // traversals of the whole parse AST, so decide in one traversal that there is nothing to expand or reject.
+    if (globalMacros.isEmpty && !mayInvolveMacros(p)) {
+      // Expansion initialises the properties of every member; callers rely on that
+      p.initProperties()
+      return p
+    }
+
     // Collect names to check for and avoid clashes
     val globalNamesWithoutMacros: Set[String] = (
          p.domains.map(_.idndef.name).toSet
@@ -143,7 +151,9 @@ object MacroExpander {
               if (localMacros.isEmpty) n
               else StrategyBuilder.Slim[PNode]({ case mac: PDefine => PSkip()(mac.pos) }).execute(n)
 
-            linearizeMethod(doExpandDefines(localMacros ++ globalMacros, methodWithoutMacros, p, namesInScopeCache))
+            val expanded = doExpandDefines(localMacros ++ globalMacros, methodWithoutMacros, p, namesInScopeCache)
+            // Only expansion introduces the nested macro blocks that linearization flattens
+            if (expanded eq methodWithoutMacros) expanded else linearizeMethod(expanded)
           }
           case n => n
         }
@@ -195,6 +205,9 @@ object MacroExpander {
       }
     }
 
+    // Macros by name; as in a search of `macros` from the front, the first macro of a given name wins
+    val macrosByName: Map[String, PDefine] = macros.reverseIterator.map(m => m.idndef.name -> m).toMap
+
     // Handy method to get a macro from its name string
     def getMacroByName(name: PIdnUse): PDefine = getMacro(name) match {
       case Some(mac) => mac
@@ -202,7 +215,7 @@ object MacroExpander {
     }
 
     // Optionally get a macro from its name
-    def getMacro(name: PIdnUse): Option[PDefine] = macros.find(_.idndef.name == name.name)
+    def getMacro(name: PIdnUse): Option[PDefine] = macrosByName.get(name.name)
     // Optionally get a macro from its name, any macros matched should not have parameters
     def getMacroPlain(name: PIdnUse): Option[PDefine] = getMacro(name)
 
@@ -264,21 +277,37 @@ object MacroExpander {
         MacroApp(app, Some(app.args), getMacroArgs(app).get)
     }
 
+    // Whether `subtree` contains a node that the expander below rewrites or rejects: a macro application, or a
+    // call as an assignment target (which is only legal as a macro application)
+    var expansionNeeded = false
+
     def detectCyclicMacros(start: PNode, seen: Map[String, PDefine]): Unit = {
-      start.visit(
-        matchOnMacroCall.andThen { case MacroApp(_, _, macroDefinition) =>
-          seen.get(macroDefinition.idndef.name) match {
-            case None => {
-              detectCyclicMacros(macroDefinition.inner.seqnOrExp, seen + (macroDefinition.idndef.name -> macroDefinition))
-            }
-            case Some(macroDef) =>
-              throw MacroException("Recursive macro declaration found: " + macroDef.idndef.name, macroDef.pos)
+      val onMacroCall = matchOnMacroCall.andThen { case MacroApp(_, _, macroDefinition) =>
+        expansionNeeded = true
+        seen.get(macroDefinition.idndef.name) match {
+          case None => {
+            detectCyclicMacros(macroDefinition.inner.seqnOrExp, seen + (macroDefinition.idndef.name -> macroDefinition))
           }
+          case Some(macroDef) =>
+            throw MacroException("Recursive macro declaration found: " + macroDef.idndef.name, macroDef.pos)
         }
-      )
+      }
+      start.visit({ case n =>
+        n match {
+          case PAssign(targets, _, _) if targets.toSeq.exists(_.isInstanceOf[PCall]) => expansionNeeded = true
+          case _ =>
+        }
+        onMacroCall.applyOrElse(n, (_: PNode) => ())
+      })
     }
 
     detectCyclicMacros(subtree, Map.empty)
+
+    // Nothing to expand: the expander would rebuild an equal subtree and initialise its properties
+    if (!expansionNeeded) {
+      subtree.initProperties()
+      return subtree
+    }
 
     // Strategy to rename variables declared in macro's body if their names are already used in
     // the scope where the macro is being expanded, avoiding name clashes (hygienic macro expansion)
@@ -501,6 +530,21 @@ object MacroExpander {
       case problem: ParseTreeDuplicationError =>
         throw MacroException("Macro expansion would result in invalid code (encountered ParseTreeDuplicationError:)\n" + problem.getMessage, problem.original.pos)
     }
+  }
+
+  /** Whether the program contains a macro definition, or a node that expansion rewrites or rejects even
+    * when no macro is defined: a macro application in type position, or a call as an assignment target. */
+  private def mayInvolveMacros(p: PProgram): Boolean = {
+    var found = false
+    p.visitOpt(n => {
+      n match {
+        case _: PDefine | _: PMacroType => found = true
+        case PAssign(targets, _, _) if targets.toSeq.exists(_.isInstanceOf[PCall]) => found = true
+        case _ =>
+      }
+      !found
+    })
+    found
   }
 
   case class ReplaceContext(paramToArgMap: Map[String, PExp] = Map.empty,
