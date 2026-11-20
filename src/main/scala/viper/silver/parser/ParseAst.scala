@@ -425,6 +425,13 @@ trait PType extends PNode {
         case _ => Set()
       })
 
+  /** Whether this type has a free type variable that satisfies `p`. Does not build the set of free type variables. */
+  def existsFreeTypeVariable(p: String => Boolean): Boolean =
+    (this match {
+      case pdt: PDomainType if pdt.isTypeVar && PTypeVar.isFreePTVName(pdt.domain.name) => p(pdt.genericName)
+      case _ => false
+    }) || subNodes.exists(_.existsFreeTypeVariable(p))
+
   override def toString(): String = this.pretty()
 }
 
@@ -866,8 +873,9 @@ case class PTypeSubstitution(m: Map[String, PType], canGeneralise: Boolean = fal
 
   def this(s: Seq[(String, PType)]) = this(s.toMap)
 
+  // Checked for every substitution that is created, which type checking does for every expression
   def isFullyReduced =
-    m.values.forall(pt => (pt.freeTypeVariables intersect m.keySet).isEmpty)
+    m.isEmpty || m.values.forall(pt => !pt.existsFreeTypeVariable(m.contains))
 
   assert(isFullyReduced)
   //  assert(keySet.forall(PTypeVar.isFreePTVName))
