@@ -7,7 +7,7 @@
 package viper.silver.plugin.standard.predicateinstance
 
 import viper.silver.ast.{Domain, DomainType, ErrTrafo, FuncApp, Function, Position, PredicateAccess, PredicateAccessPredicate, Program, WildcardPerm}
-import viper.silver.ast.utility.ViperStrategy
+import viper.silver.ast.utility.{Nodes, ViperStrategy}
 import viper.silver.ast.utility.rewriter.Traverse
 import viper.silver.parser._
 import viper.silver.plugin.{ParserPluginTemplate, SilverPlugin}
@@ -53,6 +53,9 @@ class PredicateInstancePlugin(@unused reporter: viper.silver.reporter.Reporter,
    * (to the respective predicate instance functions)
    */
   override def beforeVerify(input: Program): Program = {
+    /* Without a predicate instance, the strategy below rebuilds the program as it is */
+    if (!Nodes.existsBelow(input)(_.isInstanceOf[PredicateInstance])) return input
+
     val PredicateInstanceDomain: Option[Domain] =  input.findDomainOptionally("PredicateInstance")
 
     // list of all created predicate instance functions
