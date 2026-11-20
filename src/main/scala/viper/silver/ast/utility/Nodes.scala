@@ -24,7 +24,13 @@ object Nodes {
     * As a consequence, it is not sufficient to compare the subnodes of two
     * nodes for equality if one has to compare those two nodes for equality.
    */
-  def subnodes(n: Node): Seq[Node] = {
+  def subnodes(n: Node): Seq[Node] = n match {
+    /* Extensions are defined elsewhere, and need not be immutable */
+    case _: ExtensionMember | _: ExtensionStmt | _: ExtensionExp => computeSubnodes(n)
+    case _ => n.cachedSubnodes(computeSubnodes)
+  }
+
+  private val computeSubnodes: Node => Seq[Node] = n => {
     val subnodesWithType: Seq[Node] = n match {
       case Trigger(exps) => exps
       case Program(domains, fields, functions, predicates, methods, extensions) =>

@@ -55,6 +55,19 @@ trait Node extends Iterable[Node] with Rewritable {
   /** @see [[Nodes.subnodes()]] */
   def subnodes = Nodes.subnodes(this)
 
+  /* Nodes are immutable, and every traversal asks each node it visits for its subnodes, so they are
+   * computed once per node.
+   */
+  @volatile private var _subnodes: Seq[Node] = null
+  private[ast] def cachedSubnodes(compute: Node => Seq[Node]): Seq[Node] = {
+    var result = _subnodes
+    if (result == null) {
+      result = compute(this)
+      _subnodes = result
+    }
+    result
+  }
+
   /** @see [[Visitor.reduceTree()]] */
   def reduceTree[A](f: (Node, Seq[A]) => A) = Visitor.reduceTree(this, Nodes.subnodes)(f)
 
