@@ -677,7 +677,11 @@ trait PExp extends PNode with PDefineBody {
   def typeSubstitutions: scala.collection.Seq[PTypeSubstitution]
   /** Rule out e.g. `Impure && Impure` if `Bool && Bool` is an option (since `Bool <: Impure`). */
   def typeSubsDistinct: scala.collection.Seq[PTypeSubstitution] = {
-    val all = typeSubstitutions.distinct.zipWithIndex
+    val substitutions = typeSubstitutions
+    // The usual case. There is nothing to rule out, and no need to hash the substitution in search of duplicates.
+    if (substitutions.lengthCompare(1) <= 0) return substitutions.toList
+
+    val all = substitutions.distinct.zipWithIndex
     all.filter { case (sub, i) => all.forall {
       case (sup, j) => i == j || !sub.m.forall {
         case (name, t) => sup.m.contains(name) && isSubtype(sup.m(name), t)
@@ -722,6 +726,10 @@ case class PTypeSubstitutionInternal(m: PTypeSubstitution, added: PTypeSubstitut
   def get(key: String): Option[PType] = added.get(key).orElse(m.get(key))
 
   def compose(other: PTypeSubstitution): Either[(PType, PType), PTypeSubstitutionInternal] = {
+    // An argument without type variables has the empty substitution. Composing with it yields an equal substitution,
+    // which the code below would build by substituting into every type of this one.
+    if (other.m.isEmpty) return Right(this)
+
     val sharedKeys = this.m.keySet.intersect(other.keySet)
     if (sharedKeys.exists(p => this.m.get(p).get != other.get(p).get)) {
       /* no composed substitution if input substitutions do not match */
