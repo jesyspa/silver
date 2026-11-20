@@ -961,6 +961,31 @@ case class DeclarationMap(
   * 
   * - `PNameAnalyserOpaque` marks a scope as opaque (should not be traversed by the name analyser).
   */
+object NameAnalyser {
+  private final val Declaration = 1
+  private final val Scope = 2
+  private final val IdnUseName = 4
+  private final val Opaque = 8
+
+  /* The kinds of node that the analysis distinguishes, per node class. The analysis asks every node of a program
+   * for each of them, and a type test against a trait is slow for a class with as many supertypes as the nodes
+   * have, in particular if it fails.
+   */
+  private val kinds = new ClassValue[Integer] {
+    override def computeValue(nodeClass: Class[_]): Integer = {
+      def kind(of: Class[_], flag: Int) = if (of.isAssignableFrom(nodeClass)) flag else 0
+      kind(classOf[PDeclaration], Declaration) | kind(classOf[PScope], Scope) |
+        kind(classOf[PIdnUseName[_]], IdnUseName) | kind(classOf[PNameAnalyserOpaque], Opaque)
+    }
+  }
+
+  private def kindOf(n: PNode): Int = kinds.get(n.getClass)
+  private def isDeclaration(kind: Int): Boolean = (kind & Declaration) != 0
+  private def isScope(kind: Int): Boolean = (kind & Scope) != 0
+  private def isIdnUseName(kind: Int): Boolean = (kind & IdnUseName) != 0
+  private def isOpaque(kind: Int): Boolean = (kind & Opaque) != 0
+}
+
 case class NameAnalyser() {
 
   /** To record error messages */
@@ -999,76 +1024,64 @@ case class NameAnalyser() {
     val scopeStack = mutable.Stack[PScope]()
     var opaque = 0
 
+    import NameAnalyser.{kindOf, isDeclaration, isIdnUseName, isOpaque, isScope}
+
     val nodeDownNameCollectorVisitor = new PartialFunction[PNode, Unit] {
       def apply(n: PNode) = {
-        if (n == target.orNull)
+        if (target.isDefined && n == target.get)
           namesInScope ++= getMap().keys
-        n match {
+        val kind = kindOf(n)
+        if (isOpaque(kind)) {
           // Opaque
-          case _: PNameAnalyserOpaque =>
-            opaque += 1
-          case _ if opaque > 0 =>
+          opaque += 1
+        } else if (opaque > 0) {
+        } else if (isDeclaration(kind)) {
           // Regular
-          case d: PDeclaration =>
-            // Add to declaration map
-            val localDecls = getMap()
-            localDecls.newDecl(d)
-            val clashing = localDecls.checkUnique(d, true)
-            if (clashing.isDefined)
-              messages ++= FastMessaging.message(d.idndef, s"duplicate identifier `${d.idndef.name}` at ${d.idndef.pos._1} and at ${clashing.get.idndef.pos._1}")
-          case i: PIdnUseName[_] if target.isEmpty =>
-            getMap().newRef(i)
-          case _ =>
+          val d = n.asInstanceOf[PDeclaration]
+          // Add to declaration map
+          val localDecls = getMap()
+          localDecls.newDecl(d)
+          val clashing = localDecls.checkUnique(d, true)
+          if (clashing.isDefined)
+            messages ++= FastMessaging.message(d.idndef, s"duplicate identifier `${d.idndef.name}` at ${d.idndef.pos._1} and at ${clashing.get.idndef.pos._1}")
+        } else if (isIdnUseName(kind) && target.isEmpty) {
+          getMap().newRef(n.asInstanceOf[PIdnUseName[_]])
         }
 
-        n match {
-          case _ if opaque > 0 =>
-          case s: PScope =>
-            localDeclarationMaps.put(s.scopeId, DeclarationMap(isMember = s.isInstanceOf[PMember]))
-            scopeStack.push(curScope)
-            curScope = s
-          case _ =>
+        if (opaque <= 0 && isScope(kind)) {
+          val s = n.asInstanceOf[PScope]
+          localDeclarationMaps.put(s.scopeId, DeclarationMap(isMember = s.isInstanceOf[PMember]))
+          scopeStack.push(curScope)
+          curScope = s
         }
       }
 
-      def isDefinedAt(n: PNode) = {
-        n match {
-          case _: PDeclaration => true
-          case _: PScope => true
-          case _: PIdnUseName[_] => true
-          case _: PNameAnalyserOpaque => true
-          case _ => target.isDefined
-        }
-      }
+      def isDefinedAt(n: PNode) = kindOf(n) != 0 || target.isDefined
     }
 
     val nodeUpNameCollectorVisitor = new PartialFunction[PNode, Unit] {
       def apply(n: PNode) = {
-        n match {
+        val kind = kindOf(n)
+        if (isOpaque(kind)) {
           // Opaque
-          case _: PNameAnalyserOpaque =>
-            opaque -= 1
-          case _ if opaque > 0 =>
+          opaque -= 1
+        } else if (opaque > 0) {
+        } else if (isScope(kind)) {
           // Regular
-          case _: PScope =>
-            val popMap = localDeclarationMaps.get(curScope.scopeId).get
-            val newScope = scopeStack.pop()
-            curScope = newScope
+          val popMap = localDeclarationMaps.get(curScope.scopeId).get
+          val newScope = scopeStack.pop()
+          curScope = newScope
 
-            val clashing = getMap().merge(popMap)
-            clashing.foreach { case (clashing, unique) =>
-              messages ++= FastMessaging.message(clashing.idndef, s"duplicate identifier `${clashing.idndef.name}` at ${clashing.idndef.pos._1} and at ${unique.idndef.pos._1}")
-            }
-          case _ =>
+          val clashing = getMap().merge(popMap)
+          clashing.foreach { case (clashing, unique) =>
+            messages ++= FastMessaging.message(clashing.idndef, s"duplicate identifier `${clashing.idndef.name}` at ${clashing.idndef.pos._1} and at ${unique.idndef.pos._1}")
+          }
         }
       }
 
       def isDefinedAt(n: PNode) = {
-        n match {
-          case _: PScope => true
-          case _: PNameAnalyserOpaque => true
-          case _ => false
-        }
+        val kind = kindOf(n)
+        isScope(kind) || isOpaque(kind)
       }
     }
 
