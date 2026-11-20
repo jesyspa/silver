@@ -1006,7 +1006,8 @@ class PBinExp(val left: PExp, val op: PReserved[PBinaryOp], val right: PExp)(val
     } else false
   }
 
-  override def hashCode(): Int = viper.silver.utility.Common.generateHashCode(left, op.rs.operator, right)
+  // Cached: the hash covers both operand subtrees, and a nested expression is hashed at every level
+  override lazy val hashCode: Int = viper.silver.utility.Common.generateHashCode(left, op.rs.operator, right)
   override def toString(): String = s"PBinExp($left,$op,$right)"
 
   override def reformatExp(implicit ctx: ReformatterContext, f: PartialFunction[PNode,Seq[RNode]]): Seq[RNode] = RNode.rg(super.reformatExp)

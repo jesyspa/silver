@@ -159,6 +159,9 @@ sealed case class DomainType(domainName: String, partialTypVarsMap: Map[TypeVar,
   val typVarsMap: Map[TypeVar, Type] =
     typeParameters.map(tp => tp -> partialTypVarsMap.getOrElse(tp, tp)).to(implicitly)
 
+  /* Cached: the hash covers a map, and each variable of this type is hashed whenever it is looked up */
+  override lazy val hashCode: Int = scala.runtime.ScalaRunTime._hashCode(this)
+
   override lazy val check =
     if(!(typeParameters.toSet == typVarsMap.keys.toSet)) Seq(ConsistencyError(s"${typeParameters.toSet} doesn't equal ${typVarsMap.keys.toSet}", NoPosition)) else Seq()
 
