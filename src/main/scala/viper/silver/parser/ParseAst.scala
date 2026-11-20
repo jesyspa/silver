@@ -56,7 +56,9 @@ trait PNode extends Where with Product with Rewritable with HasExtraValList {
   private def subnodesArray: Array[PNode] = {
     var c = _subnodesCache
     if (c == null) {
-      c = PNode.children(this, this).flatMap(PNode.nodes(this, _)).toArray
+      val collected = new scala.collection.mutable.ArrayBuffer[PNode](4)
+      PNode.collectNodes(this, this, collected, isParent = true)
+      c = if (collected.isEmpty) PNode.noNodes else collected.toArray
       _subnodesCache = c
     }
     c
@@ -195,6 +197,25 @@ object PNode {
     }
   }
   def callSubnodes(n: PNode): Seq[PNode] = n.subnodesSeq
+
+  private val noNodes = new Array[PNode](0)
+
+  /** Appends the nodes that `children` and `nodes` yield for `parent` to `into`, without their nested iterators:
+    * this runs once for every node that is ever traversed.
+    */
+  private def collectNodes(parent: PNode, n: Any, into: scala.collection.mutable.ArrayBuffer[PNode], isParent: Boolean): Unit =
+    n match {
+      case node: PNode if !isParent => into += node
+      case _: PLeaf | _: Unit =>
+      case i: IterableOnce[_] => i.iterator.foreach(collectNodes(parent, _, into, isParent = false))
+      case t: Product =>
+        var k = 0
+        while (k < t.productArity) {
+          collectNodes(parent, t.productElement(k), into, isParent = false)
+          k += 1
+        }
+      case _ => children(parent, n) // Reports the unexpected kind of node
+    }
 }
 
 object TypeHelper {
