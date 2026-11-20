@@ -180,18 +180,26 @@ object Consistency {
   /** Checks that none of the given formal arguments are reassigned inside the body. */
   def checkNoArgsReassigned(args: Seq[LocalVarDecl], b: Stmt): Seq[ConsistencyError] = {
     val argVars = args.map(_.localVar).toSet
-    var s = Seq.empty[ConsistencyError]
+    if (argVars.isEmpty) return Seq.empty
 
-    for (a@LocalVarAssign(l, _) <- b if argVars.contains(l)) {
-      s :+= ConsistencyError(s"$a is a reassignment of formal argument $l.", a.pos)
+    /* One traversal of the body finds the three kinds of statement. Their errors are reported kind by kind. */
+    var assignmentErrors = Seq.empty[ConsistencyError]
+    var callErrors = Seq.empty[ConsistencyError]
+    var allocationErrors = Seq.empty[ConsistencyError]
+
+    b.visit {
+      case a@LocalVarAssign(l, _) =>
+        if (argVars.contains(l))
+          assignmentErrors :+= ConsistencyError(s"$a is a reassignment of formal argument $l.", a.pos)
+      case c@MethodCall(_, _, targets) =>
+        for (t <- targets if argVars.contains(t))
+          callErrors :+= ConsistencyError(s"$c is a reassignment of formal argument $t.", c.pos)
+      case n@NewStmt(l, _) =>
+        if (argVars.contains(l))
+          allocationErrors :+= ConsistencyError(s"$n is a reassignment of formal argument $l.", n.pos)
     }
-    for (c@MethodCall(_, _, targets) <- b; t <- targets if argVars.contains(t)) {
-      s :+= ConsistencyError(s"$c is a reassignment of formal argument $t.", c.pos)
-    }
-    for (n@NewStmt(l, _) <- b if argVars.contains(l)) {
-      s :+= ConsistencyError(s"$n is a reassignment of formal argument $l.", n.pos)
-    }
-    s
+
+    assignmentErrors ++ callErrors ++ allocationErrors
   }
   /** Check all properties required for a precondition. */
   def checkPre(e: Exp): Seq[ConsistencyError] = {
