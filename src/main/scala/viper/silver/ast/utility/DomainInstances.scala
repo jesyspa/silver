@@ -116,10 +116,35 @@ object DomainInstances {
       case dfa: DomainFuncApp => dfa -> a
     })).groupBy(pair => pair._1.funcname)
 
-    val allGroundDFAs = p.deepCollect{
+    /* The ground types and the ground domain function applications of the program, in the order in which they occur.
+     * What an occurrence contributes to the result depends only on the type, or on the function and the type arguments
+     * of the application, so that the first occurrence of each is enough. A program typically mentions few types, and
+     * applies a function many times with the same type arguments.
+     */
+    val groundTypesAndDFAs: Seq[Node] = p.deepCollect{
+      case t: Type if t.isConcrete => t
       case dfa: DomainFuncApp if dfa.typVarMap.values.forall(_.isConcrete) => dfa
     }
 
+    val seenGroundTypes = mutable.HashSet.empty[Type]
+    val seenGroundDFAs = mutable.HashSet.empty[(String, String, Map[TypeVar, Type])]
+    val allGroundDFAs = mutable.ArrayBuffer.empty[DomainFuncApp]
+    val directGroundTypes = Set.newBuilder[Type]
+
+    groundTypesAndDFAs foreach {
+      case t: Type =>
+        if (seenGroundTypes.add(t))
+          directGroundTypes ++= downClosureGround(t)
+      case dfa: DomainFuncApp =>
+        if (seenGroundDFAs.add((dfa.funcname, dfa.domainName, dfa.typVarMap))) {
+          allGroundDFAs += dfa
+          val d = p.findDomain(dfa.func(p).domainName)
+          directGroundTypes ++= downClosureGround(DomainType(d, dfa.typVarMap))
+        }
+      case other => sys.error(s"Unexpected node $other")
+    }
+
+    var allDirectGroundTypes: Set[Type] = directGroundTypes.result()
 
     def tryUnify(t1: Type, t2: Type, s: TypeSubstitution): Option[TypeSubstitution] = {
       assert(t2.isConcrete)
@@ -183,18 +208,14 @@ object DomainInstances {
       }).flatMap(downClosureGround).toSet
 
 
-    var allDirectGroundTypes: Set[Type] = p.deepCollect({
-      case t: Type if t.isConcrete => downClosureGround(t)
-      case dfa: DomainFuncApp if dfa.typVarMap.values.forall(_.isConcrete) =>
-        val d = p.findDomain(dfa.func(p).domainName)
-        downClosureGround(DomainType(d, dfa.typVarMap))
-    }).flatten.toSet
-
 /*    for (t <- gtis)
       if (!allDirectGroundTypes.contains(t))
         println(t.toString())
 */
     allDirectGroundTypes = allDirectGroundTypes.union(gtis)
+
+    /* The types that occur in a domain, which are the same for all instances of the domain */
+    val domainTypes = new mutable.HashMap[String, Set[Type]]()
 
     val todo = new mutable.Queue[TypeCoordinate]()
     val done = new mutable.HashSet[TypeCoordinate]()
@@ -242,7 +263,10 @@ object DomainInstances {
         case _: AtomicTypeCoordinate =>
         case gitc@GenericInstanceTypeCoordinate(_, typeArgs) =>
           assert(typeArgs.forall { tc => done contains tc })
-          val types = gitc.collectTypes(p)
+          val types = gitc match {
+            case ditc: DomainInstanceTypeCoordinate => domainTypes.getOrElseUpdate(ditc.dt.domainName, ditc.collectTypes(p))
+            case _ => gitc.collectTypes(p)
+          }
           types.foreach(t => {
             val tc2 = makeTypeCoordinate(t.substitute(gitc.typeSubstitution))
             if (!(done contains tc2)) {
