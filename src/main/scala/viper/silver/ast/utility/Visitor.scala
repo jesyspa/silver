@@ -6,6 +6,8 @@
 
 package viper.silver.ast.utility
 
+import scala.collection.mutable
+
 /** Implements various visiting strategies that can be applied to trees. */
 object Visitor {
 
@@ -137,9 +139,20 @@ object Visitor {
     * @return List of collected nodes.
     */
   def deepCollect[N, R](ns: Seq[N], subs: N => Seq[N])(f: PartialFunction[N, R]): Seq[R] = {
-    ns.flatMap((node: N) =>
-      reduceTree(node, subs)((n: N, vs: Seq[Seq[R]]) =>
-        if (f.isDefinedAt(n)) Seq(f(n)) ++ vs.flatten else vs.flatten))
+    val results = mutable.ArrayBuffer.empty[R]
+
+    /* The value collected for a node precedes those collected for its subnodes, but `f` is applied to the node after
+     * they were traversed. All values go into one buffer: concatenating the results of the subnodes at each node
+     * would copy a value once per ancestor of its node.
+     */
+    def collect(n: N): Unit = {
+      val position = results.length
+      subs(n).foreach(collect)
+      if (f.isDefinedAt(n)) results.insert(position, f(n))
+    }
+
+    ns.foreach(collect)
+    results.toList
   }
 
   /** Similar to `deepCollect`, but each node from `ns` is traversed top to
@@ -160,23 +173,30 @@ object Visitor {
     */
   def shallowCollect[N, R](ns: Seq[N], subs: N => Seq[N])(f: PartialFunction[N, R]): Seq[R] = {
     /* The pattern `if (f isDefinedAt n) f(n) else default(n)` is inefficient,
-     * see the ScalaDoc comments for PartialFunction. Instead, one should use
-     * applyOrElse (and methods implemented on top of it). However, this makes
-     * the code less elegant and slightly harder to read.
+     * see the ScalaDoc comments for PartialFunction. Instead, `f` is applied
+     * with applyOrElse and a default that returns a marker object.
      *
      * The code below is conceptually equivalent to
      *   ns.flatMap((node: N) =>
      *     if (f.isDefinedAt(node)) Seq(f(node))
      *     else shallowCollect(subs(node), subs)(f))
+     * but adds all values to one buffer instead of concatenating the results
+     * of the subnodes at each node.
      */
+    val results = mutable.ListBuffer.empty[R]
 
-    def shallowCollect(ns: Seq[N], subs: N => Seq[N])(f: Function[N, Option[R]]): Seq[R] = {
-      ns.flatMap((node: N) =>
-        f(node).fold(shallowCollect(subs(node), subs)(f))(_ :: Nil))
+    def collect(n: N): Unit = {
+      val result = f.applyOrElse(n, notDefined)
+      if (result.asInstanceOf[AnyRef] eq NotDefined) subs(n).foreach(collect)
+      else results += result.asInstanceOf[R]
     }
 
-    shallowCollect(ns, subs)(f.lift)
+    ns.foreach(collect)
+    results.toList
   }
+
+  private object NotDefined
+  private val notDefined: Any => Any = _ => NotDefined
 
   /** Finds the first node where `f` applies and returns the result of that
     * application (if exists).
