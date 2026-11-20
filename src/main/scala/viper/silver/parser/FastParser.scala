@@ -81,10 +81,16 @@ object FastParserCompanion {
       //   val finishPos = FilePosition(lineCol.getPos(end))
       //   f((startPos, finishPos))
       // }}
-      val startPos = FilePosition(lineCol.getPos(ctx.index))
+      val startIndex = ctx.index
       val res: P[((FilePosition, FilePosition)) => T] = p()
-      val finishPos = FilePosition(lineCol.getPos(ctx.index))
-      res.map(_((startPos, finishPos)))
+      // Most attempts fail and backtrack, so the positions are only computed for a successful parse.
+      if (res.isSuccess) {
+        val startPos = FilePosition(lineCol.getPos(startIndex))
+        val finishPos = FilePosition(lineCol.getPos(ctx.index))
+        res.map(_((startPos, finishPos)))
+      } else {
+        res.asInstanceOf[P[T]]
+      }
     }
   }
 
