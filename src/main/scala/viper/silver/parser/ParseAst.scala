@@ -114,8 +114,6 @@ trait PNode extends Where with Product with Rewritable with HasExtraValList {
   def deepCopyAll[A <: PNode]: PNode =
     StrategyBuilder.Slim[PNode]({ case n => n }).forceCopy().execute[PNode](this)
 
-  private val _children = scala.collection.mutable.ListBuffer[PNode]()
-
   def getParent: Option[PNode] = parent
   def getAncestor[T](implicit ctag: scala.reflect.ClassTag[T]): Option[T] = {
     var p = getParent
@@ -131,22 +129,36 @@ trait PNode extends Where with Product with Rewritable with HasExtraValList {
   var next: Option[PNode] = None
   var prev: Option[PNode] = None
 
+  /** Sets the parent, the index and the siblings of all nodes below this one. */
   override def initProperties(): Unit = {
+    // The nodes below this one cannot change, so their properties are still as the last call for this node left
+    // them, unless there has been a call for another node since, which may share nodes with this one. Parsing,
+    // macro expansion and each plugin ask for the properties of the whole program, mostly without changing it.
+    if (PNode.propertiesInitialisedLast ne this) {
+      PNode.propertiesInitialisedLast = null
+      initSubnodeProperties()
+      PNode.propertiesInitialisedLast = this
+    }
+  }
 
-    var ind: Int = 0
-    var prev: Option[PNode] = None
-
-    _children.clear()
-    for (c <- this.subnodes) {
-      c.parent = Some(this)
-      _children += c
-      c.index = ind
-      ind += 1
-      c.prev = prev
-      c.next = None
-      prev.foreach(_.next = Some(c))
-      prev = Some(c)
-      c.initProperties()
+  private def initSubnodeProperties(): Unit = {
+    val subnodes = subnodesArray
+    if (subnodes.length > 0) {
+      val parent = Some(this)
+      var prev: Option[PNode] = None
+      var i = 0
+      while (i < subnodes.length) {
+        val c = subnodes(i)
+        val current = Some(c)
+        c.parent = parent
+        c.index = i
+        c.prev = prev
+        c.next = None
+        if (i > 0) subnodes(i - 1).next = current
+        prev = current
+        c.initSubnodeProperties()
+        i += 1
+      }
     }
   }
 
@@ -162,6 +174,9 @@ trait PLeaf extends PNode {
 }
 
 object PNode {
+  /** The node for which [[PNode.initProperties]] ran last, unless it is running right now. */
+  @volatile private var propertiesInitialisedLast: PNode = null
+
   def children(parent: PNode, n: Any): Iterator[Any] = {
     n match {
       case _: PLeaf | _: Unit => Iterator.empty
