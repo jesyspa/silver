@@ -6,7 +6,6 @@
 
 package viper.silver.ast
 
-import scala.collection.mutable
 import scala.reflect.ClassTag
 import pretty.FastPrettyPrinter
 import utility._
@@ -79,13 +78,26 @@ trait Node extends Iterable[Node] with Rewritable {
   /** Apply the given function to the AST node and all its subnodes. */
   override def foreach[A](f: Node => A) = Visitor.visit(this, Nodes.subnodes) { case a: Node => f(a) }
 
-  /** Builds a new collection with all the AST nodes and returns an iterator over it. */
-  def iterator: Iterator[Node] = {
-    val elements = mutable.Queue.empty[Node]
-    for (x <- this) {
-      elements.append(x)
+  /** Returns an iterator over this node and all its subnodes, in the order in which `foreach` visits them.
+    * It walks the tree as it goes: `collect`, `exists` and for-comprehensions over a node go through this method,
+    * mostly for whole programs, and should not first copy every node into a collection.
+    */
+  def iterator: Iterator[Node] = new Iterator[Node] {
+    /* The iterators over the subnodes of the nodes on the path to the node returned last */
+    private var pending: List[Iterator[Node]] = List(Iterator.single(Node.this))
+
+    def hasNext: Boolean = {
+      while (pending.nonEmpty && !pending.head.hasNext) pending = pending.tail
+      pending.nonEmpty
     }
-    elements.iterator
+
+    def next(): Node = {
+      if (!hasNext) throw new NoSuchElementException("next on empty iterator")
+      val node = pending.head.next()
+      val subnodes = Nodes.subnodes(node)
+      if (subnodes.nonEmpty) pending = subnodes.iterator :: pending
+      node
+    }
   }
 
   /** @see [[Visitor.visit()]] */
