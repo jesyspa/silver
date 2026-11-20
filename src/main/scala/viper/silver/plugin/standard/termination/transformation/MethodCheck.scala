@@ -63,7 +63,7 @@ trait MethodCheck extends ProgramManager with DecreasesCheck with NestedPredicat
   }
 
   private def methodTransformer: PartialFunction[(Node, StrategyContext), (Node, StrategyContext)] = {
-    case (mc: MethodCall, ctxt) if ctxt.c.mutuallyRecursiveMeths.contains(program.findMethod(mc.methodName)) =>
+    case (mc: MethodCall, ctxt) if ctxt.c.mutuallyRecursiveMeths.contains(mc.methodName) =>
       // possibly recursive call
       val context = ctxt.c
 
@@ -252,7 +252,7 @@ trait MethodCheck extends ProgramManager with DecreasesCheck with NestedPredicat
 
   private case class MContext(override val method: Method) extends MethodContext {
     override val methodName: String = method.name
-    override val mutuallyRecursiveMeths: Set[Method] = mutuallyRecursiveMethods.find(_.contains(method)).get
+    override val mutuallyRecursiveMeths: Set[String] = mutuallyRecursiveMethods(method.name)
   }
 
   // context used
@@ -260,22 +260,26 @@ trait MethodCheck extends ProgramManager with DecreasesCheck with NestedPredicat
     val method: Method
     val methodName: String
 
-    val mutuallyRecursiveMeths: Set[Method]
+    /** Names of the methods that are mutually recursive with [[method]], including itself. */
+    val mutuallyRecursiveMeths: Set[String]
 
     var nestedRequired = false
   }
 
-  private lazy val mutuallyRecursiveMethods: Seq[Set[Method]] = CallGraph.mutuallyRecursiveVertices(methodCallGraph)
+  /** Maps each method name to the names of the methods in its strongly connected component of the call graph. */
+  private lazy val mutuallyRecursiveMethods: Map[String, Set[String]] =
+    CallGraph.mutuallyRecursiveVertices(methodCallGraph).flatMap(component => component.map(_ -> component)).toMap
 
+  // Vertices are method names. A method node as vertex would have its whole body hashed on every lookup.
   private lazy val methodCallGraph = {
-    val graph = new DefaultDirectedGraph[Method, DefaultEdge](classOf[DefaultEdge])
+    val graph = new DefaultDirectedGraph[String, DefaultEdge](classOf[DefaultEdge])
 
-    program.methods.foreach(graph.addVertex)
+    program.methods.foreach(m => graph.addVertex(m.name))
 
     def process(m: Method, n: Node): Unit = {
       n visit {
         case MethodCall(m2name, _, _) =>
-          graph.addEdge(m, program.findMethod(m2name))
+          graph.addEdge(m.name, program.findMethod(m2name).name)
       }
     }
 

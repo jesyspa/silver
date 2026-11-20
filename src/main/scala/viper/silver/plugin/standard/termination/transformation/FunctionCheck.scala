@@ -216,7 +216,7 @@ trait FunctionCheck extends ProgramManager with DecreasesCheck with ExpTransform
           val mapFormalArgsToCalledArgs = Map(callee.formalArgs.map(_.localVar).zip(calleeArgs): _*)
           val calleeDec = getFunctionDecreasesSpecification(callee.name)
 
-          if (context.mutuallyRecursiveFuncs.contains(callee)) {
+          if (context.mutuallyRecursiveFuncs.contains(callee.name)) {
             // potentially recursive call
 
             // error transformer
@@ -288,7 +288,7 @@ trait FunctionCheck extends ProgramManager with DecreasesCheck with ExpTransform
   private case class FContext(override val function: Function) extends FunctionContext {
     override val conditionInEx: Option[LocalVarDecl] = Some(LocalVarDecl(condInExVariableName, Bool)())
     override val functionName: String = function.name
-    override val mutuallyRecursiveFuncs: Set[Function] = mutuallyRecursiveFunctions.find(_.contains(function)).get
+    override val mutuallyRecursiveFuncs: Set[String] = mutuallyRecursiveFunctions(function.name)
   }
 
   // context used to create proof method
@@ -296,21 +296,25 @@ trait FunctionCheck extends ProgramManager with DecreasesCheck with ExpTransform
     val function: Function
     val functionName: String
 
-    val mutuallyRecursiveFuncs: Set[Function]
+    /** Names of the functions that are mutually recursive with [[function]], including itself. */
+    val mutuallyRecursiveFuncs: Set[String]
   }
 
 
-  private lazy val mutuallyRecursiveFunctions: Seq[Set[Function]] = CallGraph.mutuallyRecursiveVertices(functionCallGraph)
+  /** Maps each function name to the names of the functions in its strongly connected component of the call graph. */
+  private lazy val mutuallyRecursiveFunctions: Map[String, Set[String]] =
+    CallGraph.mutuallyRecursiveVertices(functionCallGraph).flatMap(component => component.map(_ -> component)).toMap
 
-  private lazy val functionCallGraph: DefaultDirectedGraph[Function, DefaultEdge] = {
-    val graph = new DefaultDirectedGraph[Function, DefaultEdge](classOf[DefaultEdge])
+  // Vertices are function names. A function node as vertex would have its whole body hashed on every lookup.
+  private lazy val functionCallGraph: DefaultDirectedGraph[String, DefaultEdge] = {
+    val graph = new DefaultDirectedGraph[String, DefaultEdge](classOf[DefaultEdge])
 
-    program.functions.foreach(graph.addVertex)
+    program.functions.foreach(f => graph.addVertex(f.name))
 
     def process(f: Function, n: Node): Unit = {
       n visit {
         case app: FuncApp =>
-          graph.addEdge(f, app.func(program))
+          graph.addEdge(f.name, app.func(program).name)
       }
     }
 
