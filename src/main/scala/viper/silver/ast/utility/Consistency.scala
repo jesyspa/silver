@@ -53,7 +53,9 @@ object Consistency {
   val identOtherLetter = s"[$identOtherLetterChars]"
   val identifier = identFirstLetter + identOtherLetter + "*"
 
-  def validIdentifier(name: String) = ("^" + identifier + "$").r.findFirstIn(name).isDefined
+  private lazy val identifierPattern = ("^" + identifier + "$").r
+
+  def validIdentifier(name: String) = identifierPattern.findFirstIn(name).isDefined
 
   /** Returns true iff the string `name` is a valid identifier, and not a reserved word. */
   def validUserDefinedIdentifier(name: String) = validIdentifier(name) && !reservedNames.contains(name)
