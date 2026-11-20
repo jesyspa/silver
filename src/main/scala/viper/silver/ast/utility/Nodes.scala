@@ -196,6 +196,21 @@ object Nodes {
                     .asInstanceOf[(Seq[Node], Seq[Any])]
   }
 
+  /** Whether `p` holds for `root` or for a value below it. This looks at least at the values that a rewriting
+    * strategy visits, so that a strategy whose rules apply only to values that satisfy `p` can be skipped for a
+    * tree without such a value. Checking this is much cheaper than running the strategy.
+    */
+  def existsBelow(root: Any)(p: Any => Boolean): Boolean = {
+    def exists(x: Any): Boolean = p(x) || (x match {
+      case n: Node => n.productIterator.exists(exists) // before `Iterable`: a node iterates over its subtree
+      case i: Iterable[_] => i.exists(exists)
+      case product: Product => product.productIterator.exists(exists)
+      case _ => false
+    })
+
+    exists(root)
+  }
+
   /** Returns all subnodes of `root` that reference (other) Silver member.
     * The returned sequence may contain `root` itself, and it may contain
     * duplicates.

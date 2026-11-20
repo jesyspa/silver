@@ -222,6 +222,9 @@ object ImpureAssumeRewriter {
     inverses = Seq.empty
     domains = Seq.empty
 
+    /* Without an `assume` statement the strategies below return the program as it is, after visiting all of it twice */
+    if (!Nodes.existsBelow(p)(_.isInstanceOf[Assume])) return p
+
     val pInvs: Program = ViperStrategy.Slim({
       case a: Assume => a.replace(a.exp, rewriteQPs(a.exp, p))
     }).execute(p)
